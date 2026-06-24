@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  docker-portainer-aeroplane-install.sh
+#  Runs INSIDE the LXC container via lxc-attach.
+#  Args: $1=AEROPLANE_PUBLIC_URL $2=AEROPLANE_REPO_BRANCH
+#        $3=AEROPLANE_PORT       $4=PORTAINER_PORT
+#
+#  Install order:
+#    1. Base dependencies
+#    2. Docker CE  ← must be running before anything else
+#    3. Portainer CE (Docker container)
+#    4. Aeroplane
+#    5. UFW firewall rules
+# =============================================================================
+
+source <(curl -fsSL https://git.community-scripts.org/community-scripts/ProxmoxVE/raw/branch/main/misc/install.func)
+
+# AEROPLANE_PUBLIC_URL="${1:-https://pilot.example.com}"
+AEROPLANE_REPO_BRANCH="${2:-main}"
+AEROPLANE_PORT="${3:-4310}"
+PORTAINER_PORT="${4:-9000}"
+
+# ── 1. Base dependencies ──────────────────────────────────────────────────────
+msg_info "Installing base dependencies"
+$STD apt-get update
+$STD apt-get install -y \
+  ca-certificates \
+  curl \
+  gnupg \
+  lsb-release \
+  apt-transport-https \
+  ufw
+msg_ok "Base dependencies installed"
+
+# ── 2. Docker CE ──────────────────────────────────────────────────────────────
+msg_info "Adding Docker apt repository"
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) \
+  signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/debian \
+  $(lsb_release -cs) stable" \
+  >/etc/apt/sources.list.d/docker.list
+$STD apt-get update
+msg_ok "Docker repository added"
+
+msg_info "Installing Docker CE"
+$STD apt-get install -y \
+  docker-ce \
+  docker-ce-cli \
+  containerd.io \
+  docker-buildx-plugin \
+  docker-compose-plugin
+msg_ok "Docker CE packages installed"
+
+msg_info "Starting Docker daemon"
+$STD systemctl enable docker
+$STD systemctl start docker
+
+# Wait until the Docker socket is actually ready before proceeding
+WAIT=0
+until docker info &>/dev/null; do
+  sleep 1
+  WAIT=$((WAIT + 1))
+  if [[ $WAIT -ge 30 ]]; then
+    msg_error "Docker daemon did not start within 30 seconds — aborting"
+    exit 1
+  fi
+done
+msg_ok "Docker CE $(docker --version | awk '{print $3}' | tr -d ',') is running"
+
+# ── 3. Portainer CE ───────────────────────────────────────────────────────────
+msg_info "Deploying Portainer CE"
+$STD docker volume create portainer_data
+$STD docker run -d \
+  --name portainer \
+  --restart always \
+  -p "${PORTAINER_PORT}:9000" \
+  -p 9443:9443 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v portainer_data:/data \
+  portainer/portainer-ce:latest
+
+cat >/etc/systemd/system/portainer-watchdog.service <<UNIT
+[Unit]
+Description=Ensure Portainer is running after boot
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker start portainer
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+$STD systemctl enable portainer-watchdog.service
+msg_ok "Portainer CE deployed on port ${PORTAINER_PORT}"
+
+# ── 4. Aeroplane ──────────────────────────────────────────────────────────────
+msg_info "Installing Aeroplane"
+curl -fsSL https://get.aeroplane.run | \
+  AEROPLANE_REPO_BRANCH="${AEROPLANE_REPO_BRANCH}" \
+  AEROPLANE_PORT="${AEROPLANE_PORT}" \
+  sh
+msg_ok "Aeroplane installed on port ${AEROPLANE_PORT}"
+
+# ── 5. UFW firewall ───────────────────────────────────────────────────────────
+msg_info "Configuring UFW firewall"
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow "${AEROPLANE_PORT}/tcp"
+ufw allow 9443/tcp
+echo "y" | ufw enable
+msg_ok "UFW enabled — open: 22, 80, 443, ${AEROPLANE_PORT}, 9443"
+
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+msg_info "Cleaning up"
+$STD apt-get autoremove -y
+$STD apt-get autoclean -y
+msg_ok "Cleanup done"
