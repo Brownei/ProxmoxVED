@@ -4,7 +4,7 @@ source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxV
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 # Source: https://www.docker.com/ | https://www.portainer.io/ | https://www.aeroplane.run/
 
-APP="Docker + Portainer + Aeroplane"
+APP="Aeroplane"
 var_tags="${var_tags:-docker;portainer;aeroplane}"
 var_cpu="${var_cpu:-2}"
 var_ram="${var_ram:-1024}"
@@ -14,6 +14,7 @@ var_version="${var_version:-12}"
 var_unprivileged="${var_unprivileged:-0}"   # Must be privileged for Docker
 var_nesting="${var_nesting:-1}"             # Required for Docker inside LXC
 var_keyctl="${var_keyctl:-1}"               # Required for Docker inside LXC
+var_hostname="${var_hostname:-aeroplane}"
 
 header_info "$APP"
 variables
