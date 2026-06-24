@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # Copyright (c) 2021-2026 community-scripts ORG
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
-# Runs INSIDE the LXC container — called automatically by build.func
+# Runs INSIDE the LXC — called automatically by build.func
+# build.func injects $FUNCTIONS_FILE_PATH into the container environment
 
-source /dev/stdin <<< "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/install.func)"
+source /dev/stdin <<<"$FUNCTIONS_FILE_PATH"
+color
+verb_ip6
+catch_errors
+setting_up_container
+network_check
+update_os
 
 AEROPLANE_REPO_BRANCH="${AEROPLANE_REPO_BRANCH:-main}"
 AEROPLANE_PORT="${AEROPLANE_PORT:-4310}"
 PORTAINER_PORT="${PORTAINER_PORT:-9000}"
 
-# ── 1. Base dependencies ──────────────────────────────────────────────────────
-msg_info "Installing base dependencies"
-$STD apt-get update
+# ── 1. Dependencies ───────────────────────────────────────────────────────────
+msg_info "Installing dependencies"
 $STD apt-get install -y \
   ca-certificates \
   curl \
@@ -19,33 +25,16 @@ $STD apt-get install -y \
   lsb-release \
   apt-transport-https \
   ufw
-msg_ok "Base dependencies installed"
+msg_ok "Dependencies installed"
 
-# ── 2. Docker CE — must fully start before anything else runs ─────────────────
-msg_info "Adding Docker apt repository"
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg \
-  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
-  >/etc/apt/sources.list.d/docker.list
-$STD apt-get update
-msg_ok "Docker repository configured"
-
+# ── 2. Docker CE ──────────────────────────────────────────────────────────────
 msg_info "Installing Docker CE"
-$STD apt-get install -y \
-  docker-ce \
-  docker-ce-cli \
-  containerd.io \
-  docker-buildx-plugin \
-  docker-compose-plugin
-msg_ok "Docker CE packages installed"
+$STD sh <(curl -fsSL https://get.docker.com)
+$STD systemctl enable --now docker
+msg_ok "Docker CE installed"
 
-msg_info "Starting Docker daemon"
-$STD systemctl enable docker
-$STD systemctl start docker
-# Block until the Docker socket accepts connections — Portainer and Aeroplane need this
+# Block here until Docker socket is live — Portainer & Aeroplane need it running
+msg_info "Waiting for Docker daemon"
 WAIT=0
 until docker info &>/dev/null; do
   sleep 1
@@ -55,7 +44,7 @@ until docker info &>/dev/null; do
     exit 1
   fi
 done
-msg_ok "Docker CE $(docker --version | awk '{print $3}' | tr -d ',') is running"
+msg_ok "Docker daemon is ready"
 
 # ── 3. Portainer CE ───────────────────────────────────────────────────────────
 msg_info "Deploying Portainer CE"
@@ -69,7 +58,7 @@ $STD docker run -d \
   -v portainer_data:/data \
   portainer/portainer-ce:latest
 
-cat >/etc/systemd/system/portainer-watchdog.service <<UNIT
+cat > /etc/systemd/system/portainer-watchdog.service << UNIT
 [Unit]
 Description=Ensure Portainer is running after boot
 After=docker.service
@@ -96,15 +85,15 @@ msg_ok "Aeroplane installed on port ${AEROPLANE_PORT}"
 
 # ── 5. UFW firewall ───────────────────────────────────────────────────────────
 msg_info "Configuring UFW firewall"
-ufw default deny incoming
-ufw default allow outgoing
+$STD ufw default deny incoming
+$STD ufw default allow outgoing
 $STD ufw allow 22/tcp
 $STD ufw allow 80/tcp
 $STD ufw allow 443/tcp
 $STD ufw allow "${AEROPLANE_PORT}/tcp"
 $STD ufw allow 9443/tcp
-echo "y" | ufw enable
-msg_ok "UFW enabled — open ports: 22, 80, 443, ${AEROPLANE_PORT}, 9443"
+echo "y" | $STD ufw enable
+msg_ok "UFW enabled — open: 22, 80, 443, ${AEROPLANE_PORT}, 9443"
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 msg_info "Cleaning up"
