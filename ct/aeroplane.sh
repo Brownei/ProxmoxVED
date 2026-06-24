@@ -5,15 +5,13 @@ source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxV
 # Source: https://www.docker.com/ | https://www.portainer.io/ | https://www.aeroplane.run/
 
 APP="Aeroplane"
-var_tags="${var_tags:-docker;portainer;aeroplane}"
-var_cpu="${var_cpu:-2}"
-var_ram="${var_ram:-1024}"
-var_disk="${var_disk:-8}"
+var_tags="${var_tags:-aeroplane}"
+var_cpu="${var_cpu:-3}"
+var_ram="${var_ram:-3024}"
+var_disk="${var_disk:-40}"
 var_os="${var_os:-debian}"
 var_version="${var_version:-12}"
-var_unprivileged="${var_unprivileged:-0}"   # Must be privileged for Docker
-var_nesting="${var_nesting:-1}"             # Required for Docker inside LXC
-var_keyctl="${var_keyctl:-1}"               # Required for Docker inside LXC
+var_unprivileged="${var_unprivileged:-1}"   # Must be privileged for Docker
 var_hostname="${var_hostname:-aeroplane}"
 
 header_info "$APP"
@@ -25,31 +23,6 @@ function update_script() {
   header_info
   check_container_storage
   check_container_resources
-
-  msg_info "Updating base system"
-  $STD apt-get update
-  $STD apt-get upgrade -y
-  msg_ok "Base system updated"
-
-  msg_info "Updating Docker Engine"
-  $STD apt-get install --only-upgrade -y \
-    docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin
-  msg_ok "Docker Engine updated"
-
-  msg_info "Updating Portainer CE"
-  $STD docker pull portainer/portainer-ce:latest
-  $STD docker stop portainer || true
-  $STD docker rm portainer || true
-  $STD docker run -d \
-    --name portainer \
-    --restart always \
-    -p 9000:9000 \
-    -p 9443:9443 \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v portainer_data:/data \
-    portainer/portainer-ce:latest
-  msg_ok "Portainer CE updated"
 
   msg_info "Updating Aeroplane"
   curl -fsSL https://get.aeroplane.run | \
